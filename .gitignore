@@ -224,3 +224,5 @@ __pycache__/
 *.mps
 
 .DS_Store
+.streamlit/secrets.toml
+data/users.db
