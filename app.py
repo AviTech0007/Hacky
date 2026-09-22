@@ -28,7 +28,7 @@ from src.coordinator.explainer import (
 from src.coordinator.forecast import forecast_pv
 from src.coordinator.optimizer import optimize
 from src.data.scenarios import SCENARIO_BLURBS, get_scenario, list_scenarios
-from src.data.weather import fetch_weather
+from src.data.weather import CONDITIONS, fetch_weather, weather_from_conditions
 from src.metrics import score_plan
 from src.twin.tasks import default_workload
 
@@ -53,6 +53,7 @@ def build_everything(
     w_depth: float,
     w_through: float,
     w_curtail: float,
+    custom_weather_data: tuple | None = None,
 ):
     cfg = load_config()
     cfg.optimizer.horizon_hours = horizon
@@ -65,6 +66,15 @@ def build_everything(
     if weather_mode == "live":
         weather = fetch_weather(cfg.site.latitude, cfg.site.longitude, hours=horizon,
                                 timezone=cfg.site.timezone)
+    elif weather_mode == "custom":
+        # custom_weather_data = (conditions, temps, peak_ghi, sunrise_h, sunset_h)
+        # conditions/temps are tuples (not lists) so this stays hashable and
+        # st.cache_data can key on it - built in the sidebar editor below.
+        conditions, temps, peak_ghi, sunrise_h, sunset_h = custom_weather_data
+        weather = weather_from_conditions(
+            list(conditions), list(temps),
+            peak_ghi=peak_ghi, sunrise_h=sunrise_h, sunset_h=sunset_h,
+        )
     else:
         weather = get_scenario(weather_mode, hours=horizon)
 
@@ -78,18 +88,77 @@ def build_everything(
 
 # --------------------------------------------------------------- sidebar ---
 st.sidebar.title("Site controls")
-weather_options = ["live"] + list_scenarios()
-weather_labels = {"live": "Live (Open-Meteo)", **{k: k.replace("_", " ").title() for k in list_scenarios()}}
+horizon = st.sidebar.slider("Planning horizon (hours)", 12, 24, 24)
+
+weather_options = ["live", "custom"] + list_scenarios()
+weather_labels = {
+    "live": "Live (Open-Meteo)",
+    "custom": "Custom (enter your own)",
+    **{k: k.replace("_", " ").title() for k in list_scenarios()},
+}
 weather_mode = st.sidebar.selectbox(
     "Weather",
     weather_options,
     index=weather_options.index("afternoon_clouds"),
     format_func=lambda k: weather_labels[k],
-    help="Pick a named synthetic scenario to demo different conditions, or pull today's real forecast.",
+    help="Pick a named synthetic scenario, pull today's real forecast, or type in your own hourly values.",
 )
 if weather_mode in SCENARIO_BLURBS:
     st.sidebar.caption(SCENARIO_BLURBS[weather_mode])
-horizon = st.sidebar.slider("Planning horizon (hours)", 12, 24, 24)
+
+custom_weather_data = None
+if weather_mode == "custom":
+    st.sidebar.caption(
+        "Describe each hour the way you'd actually know it - a condition "
+        "and a temperature. No irradiance numbers needed; the coordinator "
+        "works those out on its own."
+    )
+
+    with st.sidebar.expander("Advanced: daylight shape", expanded=False):
+        peak_ghi = st.slider(
+            "Peak sun intensity (clear-sky reference, W/m²)", 400.0, 1100.0, 900.0, 50.0,
+            help="Only reached on a fully 'Clear' hour at solar noon - every other condition scales down from this.",
+        )
+        sunrise_h, sunset_h = st.slider("Daylight window (hour)", 0, 23, (6, 18))
+
+    condition_options = list(CONDITIONS.keys())
+    if "custom_weather_base" not in st.session_state or len(st.session_state["custom_weather_base"]) != horizon:
+        st.session_state["custom_weather_base"] = pd.DataFrame(
+            {
+                "Hour": list(range(horizon)),
+                "Condition": ["Sunny"] * horizon,
+                "Temp (°C)": [24.0] * horizon,
+            }
+        )
+
+    # Pass the SAME base frame in every rerun and never write the widget's
+    # return value back into it. st.data_editor already tracks per-cell
+    # edits internally against its own `key` and re-applies them onto
+    # whatever `data` you pass - looping edited_df back in as `data` here
+    # double-tracks state, which is what caused an edited row to jump to
+    # the top of the table instead of staying put.
+    edited_df = st.sidebar.data_editor(
+        st.session_state["custom_weather_base"],
+        disabled=["Hour"],
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        column_config={
+            "Condition": st.column_config.SelectboxColumn(options=condition_options),
+            "Temp (°C)": st.column_config.NumberColumn(step=0.5),  # no artificial bounds - any value is accepted
+        },
+        key="custom_weather_editor",
+    )
+
+    # Tuples, not lists, so this is hashable and st.cache_data can key on it.
+    custom_weather_data = (
+        tuple(edited_df["Condition"].tolist()),
+        tuple(edited_df["Temp (°C)"].tolist()),
+        peak_ghi,
+        sunrise_h,
+        sunset_h,
+    )
+
 seed = st.sidebar.number_input("Workload seed", value=7, step=1)
 n_flex = st.sidebar.slider("Deferrable jobs", 0, 12, 6)
 
@@ -103,7 +172,8 @@ w_through = st.sidebar.slider("Throughput (wear) weight", 0.0, 10.0, 1.0, 0.5)
 w_curtail = st.sidebar.slider("Curtailment penalty", 0.0, 1.0, 0.05, 0.05)
 
 cfg, pv, tasks, plan, base, trace = build_everything(
-    weather_mode, horizon, int(seed), n_flex, soc_min, soc_comfort, w_depth, w_through, w_curtail
+    weather_mode, horizon, int(seed), n_flex, soc_min, soc_comfort, w_depth, w_through, w_curtail,
+    custom_weather_data,
 )
 score = score_plan(plan, tasks, cfg.battery, cfg.optimizer.weights)
 score_base = score_plan(base, tasks, cfg.battery, cfg.optimizer.weights)
@@ -115,6 +185,9 @@ st.title(cfg.site.name)
 
 if pv.source == "open-meteo":
     badge_color, badge_bg, badge_text = "#1E7A46", "#12291D", "🟢 LIVE — Open-Meteo real-time forecast"
+elif pv.source == "custom":
+    badge_color, badge_bg = "#8C4FB0", "#241533"
+    badge_text = "🟣 CUSTOM — user-entered weather"
 elif pv.source.startswith("synthetic:"):
     scenario_id = pv.source.split(":", 1)[1]
     badge_color, badge_bg = "#3B6FB0", "#12203A"
