@@ -1,0 +1,15 @@
+# core
+pulp>=2.8,<4.0          # MILP modelling + bundled CBC solver
+pyyaml>=6.0
+requests>=2.31
+
+# dashboard
+streamlit>=1.40
+plotly>=5.20
+pandas>=2.0
+
+# explainer (optional - the app degrades to template explanations without it)
+groq>=0.11
+
+# dev
+pytest>=8.0

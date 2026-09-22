@@ -1,0 +1,49 @@
+# Every number a judge might ask you to justify lives here, not in the code.
+# Change a value, re-run, and the whole pipeline follows.
+
+site:
+  name: "Edge Node Alpha"
+  latitude: 12.9716          # Bengaluru. Swap for your demo location.
+  longitude: 77.5946
+  timezone: "auto"           # "auto" lets Open-Meteo infer from lat/lon
+  base_load_kw: 0.08         # always-on draw: radio, MCU, housekeeping
+
+pv:
+  peak_power_kw: 2.0         # nameplate array size
+  derate: 0.85               # soiling, wiring, inverter losses
+  temp_coeff_per_c: -0.004   # power loss per degree above 25 C
+  ref_temp_c: 25.0
+
+battery:
+  capacity_kwh: 5.0
+  soc_init_frac: 0.60
+  soc_min_frac: 0.20         # hard floor - protects the cells
+  soc_max_frac: 0.95
+  soc_comfort_frac: 0.40     # soft floor - going below costs you in the objective
+  soc_terminal_frac: 0.50    # where SoC must land at the end of the horizon
+  max_charge_kw: 1.5
+  max_discharge_kw: 1.5
+  soft_rate_kw: 1.0          # above this C-rate, stress penalty kicks in
+  charge_efficiency: 0.95
+  discharge_efficiency: 0.95
+  cycle_cost_per_kwh: 0.45   # amortised cell cost per kWh of throughput
+
+optimizer:
+  horizon_hours: 24
+  time_limit_s: 20
+  weights:
+    unserved: 1000.0         # failing to power the load - must dominate
+    missed_task: 50.0        # multiplied by each task's own value
+    throughput: 1.0          # scales cycle_cost_per_kwh
+    deep_discharge: 25.0     # per kWh-hour spent below the comfort floor
+    rate_stress: 3.0         # per kWh above the soft C-rate
+    curtailment: 0.05        # nudges the plan to actually use free sun
+
+workload:
+  seed: 7
+  n_flexible: 6              # deferrable jobs the optimizer gets to move around
+
+explainer:
+  provider: "groq"
+  model: "openai/gpt-oss-120b"
+  temperature: 0.2
