@@ -2,7 +2,7 @@
 # Change a value, re-run, and the whole pipeline follows.
 
 site:
-  name: "Edge Node Alpha"
+  name: "VoltShift"
   latitude: 12.9716          # Bengaluru. Swap for your demo location.
   longitude: 77.5946
   timezone: "auto"           # "auto" lets Open-Meteo infer from lat/lon
