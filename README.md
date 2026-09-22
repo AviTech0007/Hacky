@@ -83,3 +83,4 @@ is always feasible. It never blacks out silently; it tells you it had to.
 - **Multi-node** — one MILP over several sites sharing a task queue.
 - **Learned degradation** — fit `cycle_cost_per_kwh` from a real cell dataset
   instead of assuming it.
+- Trying to deploy it on Vercel as well.
